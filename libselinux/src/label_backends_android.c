@@ -126,7 +126,7 @@ static int process_line(struct selabel_handle *rec,
 		spec_arr[nspec].lr.ctx_raw = context;
 
 		if (rec->validating) {
-			if (selabel_validate(rec, &spec_arr[nspec].lr) < 0) {
+			if (selabel_validate(&spec_arr[nspec].lr) < 0) {
 				selinux_log(SELINUX_ERROR,
 					    "%s:  line %u has invalid context %s\n",
 					    path, lineno, spec_arr[nspec].lr.ctx_raw);
@@ -208,7 +208,10 @@ static int init(struct selabel_handle *rec, const struct selinux_opt *opts,
 				goto finish;
 
 			maxnspec = data->nspec;
-			rewind(fp);
+
+			status = fseek(fp, 0L, SEEK_SET);
+			if (status == -1)
+				goto finish;
 		}
 	}
 

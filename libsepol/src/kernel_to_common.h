@@ -13,33 +13,33 @@
 // initial sid names aren't actually stored in the pp files, need to a have
 // a mapping, taken from the linux kernel
 static const char * const selinux_sid_to_str[] = {
-	"null",
+	NULL,
 	"kernel",
 	"security",
 	"unlabeled",
-	"fs",
+	NULL,
 	"file",
-	"file_labels",
+	NULL,
 	"init",
 	"any_socket",
 	"port",
 	"netif",
 	"netmsg",
 	"node",
-	"igmp_packet",
-	"icmp_socket",
-	"tcp_socket",
-	"sysctl_modprobe",
-	"sysctl",
-	"sysctl_fs",
-	"sysctl_kernel",
-	"sysctl_net",
-	"sysctl_net_unix",
-	"sysctl_vm",
-	"sysctl_dev",
-	"kmod",
-	"policy",
-	"scmp_packet",
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
 	"devnull",
 };
 
@@ -83,8 +83,6 @@ struct strs {
 	size_t size;
 };
 
-__attribute__ ((format(printf, 1, 2)))
-void sepol_log_err(const char *fmt, ...);
 void sepol_indent(FILE *out, int indent);
 __attribute__ ((format(printf, 2, 3)))
 void sepol_printf(FILE *out, const char *fmt, ...);

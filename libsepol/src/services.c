@@ -1,5 +1,5 @@
 /*
- * Author : Stephen Smalley, <sds@tycho.nsa.gov>
+ * Author : Stephen Smalley, <stephen.smalley.work@gmail.com>
  */
 /*
  * Updated: Trusted Computer Solutions, Inc. <dgoeddel@trustedcs.com>
@@ -787,8 +787,8 @@ mls_ops:
 
 	if (r_buf && ((s[0] == 0) || ((s[0] == 1 &&
 				(flags & SHOW_GRANTED) == SHOW_GRANTED)))) {
-		int len, new_buf_len;
-		char *p, **new_buf = r_buf;
+		int len;
+		char *p;
 		/*
 		* These contain the constraint components that are added to the
 		* callers reason buffer.
@@ -801,13 +801,13 @@ mls_ops:
 				len = snprintf(p, reason_buf_len - reason_buf_used,
 						"%s", buffers[x]);
 				if (len < 0 || len >= reason_buf_len - reason_buf_used) {
-					new_buf_len = reason_buf_len + REASON_BUF_SIZE;
-					*new_buf = realloc(*r_buf, new_buf_len);
-					if (!*new_buf) {
+					int new_buf_len = reason_buf_len + REASON_BUF_SIZE;
+					char *new_buf = realloc(*r_buf, new_buf_len);
+					if (!new_buf) {
 						ERR(NULL, "failed to realloc reason buffer");
 						goto out1;
 					}
-					**r_buf = **new_buf;
+					*r_buf = new_buf;
 					reason_buf_len = new_buf_len;
 					continue;
 				} else {
@@ -1708,7 +1708,10 @@ int next_entry(void *buf, struct policy_file *fp, size_t bytes)
 size_t put_entry(const void *ptr, size_t size, size_t n,
 			struct policy_file *fp)
 {
-	size_t bytes = size * n;
+	size_t bytes;
+
+	if (__builtin_mul_overflow(size, n, &bytes))
+		return 0;
 
 	switch (fp->type) {
 	case PF_USE_STDIO:
@@ -1745,7 +1748,7 @@ int str_read(char **strp, struct policy_file *fp, size_t len)
 	int rc;
 	char *str;
 
-	if (zero_or_saturated(len)) {
+	if (zero_or_saturated(len) || exceeds_available_bytes(fp, len, sizeof(char))) {
 		errno = EINVAL;
 		return -1;
 	}

@@ -1,7 +1,7 @@
 #
 # Makefile for building the checkpolicy program
 #
-LINGUAS ?= ru
+LINGUAS ?=
 PREFIX ?= /usr
 BINDIR ?= $(PREFIX)/bin
 MANDIR ?= $(PREFIX)/share/man
@@ -50,6 +50,10 @@ y.tab.c: policy_parse.y
 lex.yy.c: policy_scan.l y.tab.c
 	$(LEX) policy_scan.l
 
+.PHONY: test
+test: checkpolicy
+	./tests/test_roundtrip.sh
+
 install: all
 	-mkdir -p $(DESTDIR)$(BINDIR)
 	-mkdir -p $(DESTDIR)$(MANDIR)/man8
@@ -68,7 +72,7 @@ relabel: install
 	/sbin/restorecon $(DESTDIR)$(BINDIR)/checkmodule
 
 clean:
-	-rm -f $(TARGETS) $(CHECKPOLOBJS) $(CHECKMODOBJS) y.tab.c y.tab.h lex.yy.c
+	-rm -f $(TARGETS) $(CHECKPOLOBJS) $(CHECKMODOBJS) y.tab.c y.tab.h lex.yy.c tests/testpol.conf tests/testpol.bin
 	$(MAKE) -C test clean
 
 indent:

@@ -943,10 +943,10 @@ int mls_semantic_level_expand(mls_semantic_level_t * sl, mls_level_t * l,
 		return -1;
 	}
 	for (cat = sl->cat; cat; cat = cat->next) {
-		if (cat->low > cat->high) {
+		if (!cat->low || cat->low > cat->high) {
 			ERR(h, "Category range is not valid %s.%s",
-			    p->p_cat_val_to_name[cat->low - 1],
-			    p->p_cat_val_to_name[cat->high - 1]);
+			    cat->low > 0 ? p->p_cat_val_to_name[cat->low - 1] : "Invalid",
+			    cat->high > 0 ? p->p_cat_val_to_name[cat->high - 1] : "Invalid");
 			return -1;
 		}
 		for (i = cat->low - 1; i < cat->high; i++) {
@@ -2350,7 +2350,7 @@ static int type_attr_map(hashtab_key_t key
 	policydb_t *p = state->out;
 	unsigned int i;
 	ebitmap_node_t *tnode;
-	int value;
+	uint32_t value;
 
 	type = (type_datum_t *) datum;
 	value = type->s.value;
@@ -2993,6 +2993,10 @@ int expand_module(sepol_handle_t * handle,
 	state.out->policyvers = POLICYDB_VERSION_MAX;
 	if (state.base->name) {
 		state.out->name = strdup(state.base->name);
+		if (!state.out->name) {
+			ERR(handle, "Out of memory!");
+			goto cleanup;
+		}
 	}
 
 	/* Copy mls state from base to out */

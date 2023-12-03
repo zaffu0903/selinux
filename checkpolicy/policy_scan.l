@@ -1,6 +1,6 @@
 
 /* 
- * Author : Stephen Smalley, <sds@tycho.nsa.gov>
+ * Author : Stephen Smalley, <stephen.smalley.work@gmail.com>
  */
 
 /* Updated: David Caplan, <dac@tresys.com>
@@ -77,8 +77,6 @@ hexval	[0-9A-Fa-f]
 				      source_lineno++;
 				  yyless(1);
 				}
-CLONE |
-clone				{ return(CLONE); }
 COMMON |
 common				{ return(COMMON); }
 CLASS |

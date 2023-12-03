@@ -170,27 +170,27 @@ static int get_context_user(FILE * fp,
 
 		/* Skip leading whitespace. */
 		start = line;
-		while (*start && isspace(*start))
+		while (*start && isspace((unsigned char)*start))
 			start++;
 		if (!(*start))
 			continue;
 
 		/* Find the end of the (partial) fromcon in the line. */
 		end = start;
-		while (*end && !isspace(*end))
+		while (*end && !isspace((unsigned char)*end))
 			end++;
 		if (!(*end))
 			continue;
 
 		/* Check for a match. */
 		linerole = start;
-		while (*start && !isspace(*start) && *start != ':')
+		while (*start && !isspace((unsigned char)*start) && *start != ':')
 			start++;
 		if (*start != ':')
 			continue;
 		*start = 0;
 		linetype = ++start;
-		while (*start && !isspace(*start) && *start != ':')
+		while (*start && !isspace((unsigned char)*start) && *start != ':')
 			start++;
 		if (!(*start))
 			continue;
@@ -210,14 +210,14 @@ static int get_context_user(FILE * fp,
 	start = ++end;
 	while (*start) {
 		/* Skip leading whitespace */
-		while (*start && isspace(*start))
+		while (*start && isspace((unsigned char)*start))
 			start++;
 		if (!(*start))
 			break;
 
 		/* Find the end of this partial context. */
 		end = start;
-		while (*end && !isspace(*end))
+		while (*end && !isspace((unsigned char)*end))
 			end++;
 		if (*end)
 			*end++ = 0;
@@ -272,7 +272,7 @@ static int get_context_user(FILE * fp,
 			continue;
 		}
 		if (security_check_context(usercon_str2) == 0) {
-			new_reachable = realloc(*reachable, (*nreachable + 2) * sizeof(char *));
+			new_reachable = reallocarray(*reachable, *nreachable + 2, sizeof(char *));
 			if (!new_reachable) {
 				context_free(usercon);
 				rc = -1;

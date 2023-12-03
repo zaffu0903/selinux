@@ -1,10 +1,12 @@
 
 #include <sepol/policydb/conditional.h>
 #include <sepol/policydb/ebitmap.h>
+#include <sepol/policydb/polcaps.h>
 #include <sepol/policydb/policydb.h>
 #include <sepol/policydb/services.h>
 
 #include "debug.h"
+#include "kernel_to_common.h"
 #include "policydb_validate.h"
 
 #define bool_xor(a, b) (!(a) != !(b))
@@ -23,7 +25,7 @@ typedef struct map_arg {
 
 static int create_gap_ebitmap(char **val_to_name, uint32_t nprim, ebitmap_t *gaps)
 {
-	unsigned int i;
+	uint32_t i;
 
 	ebitmap_init(gaps);
 
@@ -180,7 +182,7 @@ static int validate_scope(__attribute__ ((unused)) hashtab_key_t k, hashtab_datu
 {
 	const scope_datum_t *scope_datum = (scope_datum_t *)d;
 	const uint32_t *nprim = (uint32_t *)args;
-	unsigned int i;
+	uint32_t i;
 
 	switch (scope_datum->scope) {
 	case SCOPE_REQ:
@@ -205,7 +207,7 @@ static int validate_scopes(sepol_handle_t *handle, const symtab_t scopes[], cons
 {
 	const avrule_decl_t *decl;
 	unsigned int i;
-	unsigned int num_decls = 0;
+	uint32_t num_decls = 0;
 
 	for (; block != NULL; block = block->next) {
 		for (decl = block->branch_list; decl; decl = decl->next) {
@@ -228,6 +230,7 @@ bad:
 static int validate_constraint_nodes(sepol_handle_t *handle, unsigned int nperms, const constraint_node_t *cons, validate_t flavors[])
 {
 	const constraint_expr_t *cexp;
+	int depth;
 
 	for (; cons; cons = cons->next) {
 		if (nperms == 0 && cons->permissions != 0)
@@ -240,8 +243,14 @@ static int validate_constraint_nodes(sepol_handle_t *handle, unsigned int nperms
 		if (!cons->expr)
 			goto bad;
 
+		depth = -1;
+
 		for (cexp = cons->expr; cexp; cexp = cexp->next) {
 			if (cexp->expr_type == CEXPR_NAMES) {
+				if (depth >= (CEXPR_MAXDEPTH - 1))
+					goto bad;
+				depth++;
+
 				if (cexp->attr & CEXPR_XTARGET && nperms != 0)
 					goto bad;
 				if (!(cexp->attr & CEXPR_TYPE)) {
@@ -282,6 +291,10 @@ static int validate_constraint_nodes(sepol_handle_t *handle, unsigned int nperms
 					goto bad;
 				}
 			} else if (cexp->expr_type == CEXPR_ATTR) {
+				if (depth >= (CEXPR_MAXDEPTH - 1))
+					goto bad;
+				depth++;
+
 				if (!ebitmap_is_empty(&cexp->names))
 					goto bad;
 				if (validate_empty_type_set(cexp->type_names))
@@ -318,8 +331,14 @@ static int validate_constraint_nodes(sepol_handle_t *handle, unsigned int nperms
 			} else {
 				switch (cexp->expr_type) {
 				case CEXPR_NOT:
+					if (depth < 0)
+						goto bad;
+					break;
 				case CEXPR_AND:
 				case CEXPR_OR:
+					if (depth < 1)
+						goto bad;
+					depth--;
 					break;
 				default:
 					goto bad;
@@ -335,6 +354,9 @@ static int validate_constraint_nodes(sepol_handle_t *handle, unsigned int nperms
 					goto bad;
 			}
 		}
+
+		if (depth != 0)
+			goto bad;
 	}
 
 	return 0;
@@ -348,7 +370,7 @@ static int validate_common_datum(sepol_handle_t *handle, const common_datum_t *c
 {
 	if (validate_value(common->s.value, &flavors[SYM_COMMONS]))
 		goto bad;
-	if (common->permissions.nprim > PERM_SYMTAB_SIZE)
+	if (common->permissions.table->nel == 0 || common->permissions.nprim > PERM_SYMTAB_SIZE)
 		goto bad;
 
 	return 0;
@@ -468,7 +490,7 @@ static int validate_role_datum_wrapper(__attribute__((unused)) hashtab_key_t k, 
 	return validate_role_datum(margs->handle, d, margs->flavors);
 }
 
-static int validate_simpletype(uint32_t value, const policydb_t *p, validate_t flavors[])
+static int validate_simpletype(uint32_t value, const policydb_t *p, const validate_t flavors[SYM_NUM])
 {
 	const type_datum_t *type;
 
@@ -544,6 +566,8 @@ static int validate_mls_semantic_cat(const mls_semantic_cat_t *cat, const valida
 		if (validate_value(cat->low, cats))
 			goto bad;
 		if (validate_value(cat->high, cats))
+			goto bad;
+		if (cat->low > cat->high)
 			goto bad;
 	}
 
@@ -683,7 +707,7 @@ static int validate_bool_datum_wrapper(__attribute__((unused)) hashtab_key_t k, 
 
 static int validate_datum_array_gaps(sepol_handle_t *handle, const policydb_t *p, validate_t flavors[])
 {
-	unsigned int i;
+	uint32_t i;
 
 	for (i = 0; i < p->p_classes.nprim; i++) {
 		if (bool_xnor(p->class_val_to_struct[i], ebitmap_get_bit(&flavors[SYM_CLASSES].gaps, i)))
@@ -797,6 +821,8 @@ static int validate_avtab_key(const avtab_key_t *key, int conditional, const pol
 	case AVTAB_XPERMS_ALLOWED:
 	case AVTAB_XPERMS_AUDITALLOW:
 	case AVTAB_XPERMS_DONTAUDIT:
+		if (p->target_platform != SEPOL_TARGET_SELINUX)
+			goto bad;
 		if (conditional)
 			goto bad;
 		break;
@@ -908,6 +934,8 @@ static int validate_avrules(sepol_handle_t *handle, const avrule_t *avrule, int 
 		}
 
 		if (avrule->specified & AVRULE_XPERMS) {
+			if (p->target_platform != SEPOL_TARGET_SELINUX)
+				goto bad;
 			if (!avrule->xperms)
 				goto bad;
 			switch (avrule->xperms->specified) {
@@ -976,12 +1004,14 @@ static int validate_cond_expr(sepol_handle_t *handle, const struct cond_expr *ex
 		case COND_BOOL:
 			if (validate_value(expr->boolean, boolean))
 				goto bad;
-			if (depth == (COND_EXPR_MAXDEPTH - 1))
+			if (depth >= (COND_EXPR_MAXDEPTH - 1))
 				goto bad;
 			depth++;
 			break;
 		case COND_NOT:
 			if (depth < 0)
+				goto bad;
+			if (expr->boolean != 0)
 				goto bad;
 			break;
 		case COND_OR:
@@ -990,6 +1020,8 @@ static int validate_cond_expr(sepol_handle_t *handle, const struct cond_expr *ex
 		case COND_EQ:
 		case COND_NEQ:
 			if (depth < 1)
+				goto bad;
+			if (expr->boolean != 0)
 				goto bad;
 			depth--;
 			break;
@@ -1088,7 +1120,9 @@ static int validate_filename_trans(hashtab_key_t k, hashtab_datum_t d, void *arg
 {
 	const filename_trans_key_t *ftk = (filename_trans_key_t *)k;
 	const filename_trans_datum_t *ftd = d;
-	validate_t *flavors = (validate_t *)args;
+	const map_arg_t *margs = args;
+	const validate_t *flavors = margs->flavors;
+	const policydb_t *p = margs->policy;
 
 	if (validate_value(ftk->ttype, &flavors[SYM_TYPES]))
 		goto bad;
@@ -1099,7 +1133,7 @@ static int validate_filename_trans(hashtab_key_t k, hashtab_datum_t d, void *arg
 	for (; ftd; ftd = ftd->next) {
 		if (validate_ebitmap(&ftd->stypes, &flavors[SYM_TYPES]))
 			goto bad;
-		if (validate_value(ftd->otype, &flavors[SYM_TYPES]))
+		if (validate_simpletype(ftd->otype, p, flavors))
 			goto bad;
 	}
 
@@ -1109,9 +1143,11 @@ bad:
 	return -1;
 }
 
-static int validate_filename_trans_hashtab(sepol_handle_t *handle, hashtab_t filename_trans, validate_t flavors[])
+static int validate_filename_trans_hashtab(sepol_handle_t *handle, const policydb_t *p, validate_t flavors[])
 {
-	if (hashtab_map(filename_trans, validate_filename_trans, flavors)) {
+	map_arg_t margs = { flavors, handle, p };
+
+	if (hashtab_map(p->filename_trans, validate_filename_trans, &margs)) {
 		ERR(handle, "Invalid filename trans");
 		return -1;
 	}
@@ -1145,9 +1181,15 @@ static int validate_ocontexts(sepol_handle_t *handle, const policydb_t *p, valid
 
 			if (p->target_platform == SEPOL_TARGET_SELINUX) {
 				switch (i) {
+				case OCON_ISID:
+					if (octx->sid[0] == SEPOL_SECSID_NULL || octx->sid[0] >= SELINUX_SID_SZ)
+						goto bad;
+					break;
 				case OCON_FS:
 				case OCON_NETIF:
 					if (validate_context(&octx->context[1], flavors, p->mls))
+						goto bad;
+					if (!octx->u.name)
 						goto bad;
 					break;
 				case OCON_PORT:
@@ -1163,6 +1205,40 @@ static int validate_ocontexts(sepol_handle_t *handle, const policydb_t *p, valid
 					default:
 						goto bad;
 					}
+					if (!octx->u.name)
+						goto bad;
+					break;
+				case OCON_IBPKEY:
+					if (octx->u.ibpkey.low_pkey > octx->u.ibpkey.high_pkey)
+						goto bad;
+					break;
+				case OCON_IBENDPORT:
+					if (octx->u.ibendport.port == 0)
+						goto bad;
+					if (!octx->u.ibendport.dev_name)
+						goto bad;
+					break;
+				}
+			} else if (p->target_platform == SEPOL_TARGET_XEN) {
+				switch(i) {
+				case OCON_XEN_ISID:
+					if (octx->sid[0] == SEPOL_SECSID_NULL || octx->sid[0] >= XEN_SID_SZ)
+						goto bad;
+					break;
+				case OCON_XEN_IOPORT:
+					if (octx->u.ioport.low_ioport > octx->u.ioport.high_ioport)
+						goto bad;
+					break;
+				case OCON_XEN_IOMEM:
+					if (octx->u.iomem.low_iomem > octx->u.iomem.high_iomem)
+						goto bad;
+					if (p->policyvers < POLICYDB_VERSION_XEN_DEVICETREE && octx->u.iomem.high_iomem > 0xFFFFFFFFULL)
+						goto bad;
+					break;
+				case OCON_XEN_DEVICETREE:
+					if (!octx->u.name)
+						goto bad;
+					break;
 				}
 			}
 		}
@@ -1369,7 +1445,7 @@ bad:
 static int validate_permissives(sepol_handle_t *handle, const policydb_t *p, validate_t flavors[])
 {
 	ebitmap_node_t *node;
-	unsigned i;
+	uint32_t i;
 
 	ebitmap_for_each_positive_bit(&p->permissive_map, node, i) {
 		if (validate_simpletype(i, p, flavors))
@@ -1421,7 +1497,7 @@ static int validate_range_transitions(sepol_handle_t *handle, const policydb_t *
 static int validate_typeattr_map(sepol_handle_t *handle, const policydb_t *p, validate_t flavors[])
 {
 	const ebitmap_t *maps = p->type_attr_map;
-	unsigned int i;
+	uint32_t i;
 
 	if (p->policy_type == POLICY_KERN) {
 		for (i = 0; i < p->p_types.nprim; i++) {
@@ -1486,6 +1562,23 @@ bad:
 	return -1;
 }
 
+static int validate_policycaps(sepol_handle_t *handle, const policydb_t *p)
+{
+	ebitmap_node_t *node;
+	uint32_t i;
+
+	ebitmap_for_each_positive_bit(&p->policycaps, node, i) {
+		if (!sepol_polcap_getname(i))
+			goto bad;
+	}
+
+	return 0;
+
+bad:
+	ERR(handle, "Invalid policy capability");
+	return -1;
+}
+
 static void validate_array_destroy(validate_t flavors[])
 {
 	unsigned int i;
@@ -1508,6 +1601,9 @@ int policydb_validate(sepol_handle_t *handle, const policydb_t *p)
 	if (validate_properties(handle, p))
 		goto bad;
 
+	if (validate_policycaps(handle, p))
+		goto bad;
+
 	if (p->policy_type == POLICY_KERN) {
 		if (validate_avtab(handle, &p->te_avtab, p, flavors))
 			goto bad;
@@ -1519,7 +1615,7 @@ int policydb_validate(sepol_handle_t *handle, const policydb_t *p)
 		if (validate_role_allows(handle, p->role_allow, flavors))
 			goto bad;
 		if (p->policyvers >= POLICYDB_VERSION_FILENAME_TRANS)
-			if (validate_filename_trans_hashtab(handle, p->filename_trans, flavors))
+			if (validate_filename_trans_hashtab(handle, p, flavors))
 				goto bad;
 	} else {
 		if (validate_avrule_blocks(handle, p->global, p, flavors))

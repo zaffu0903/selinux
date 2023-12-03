@@ -1,5 +1,5 @@
 /*
- * Author : Stephen Smalley, <sds@tycho.nsa.gov>
+ * Author : Stephen Smalley, <stephen.smalley.work@gmail.com>
  */
 
 /*
@@ -2511,6 +2511,8 @@ int define_te_avtab_extended_perms(int which)
 	return rc;
 }
 
+#define PERMISSION_MASK(nprim) ((nprim) == PERM_SYMTAB_SIZE ? (~UINT32_C(0)) : ((UINT32_C(1) << (nprim)) - 1))
+
 static int define_te_avtab_helper(int which, avrule_t ** rule)
 {
 	char *id;
@@ -2616,8 +2618,8 @@ static int define_te_avtab_helper(int which, avrule_t ** rule)
 			cladatum = policydbp->class_val_to_struct[i];
 
 			if (strcmp(id, "*") == 0) {
-				/* set all permissions in the class */
-				cur_perms->data = ~0U;
+				/* set all declared permissions in the class */
+				cur_perms->data = PERMISSION_MASK(cladatum->permissions.nprim);
 				goto next;
 			}
 
@@ -2625,7 +2627,16 @@ static int define_te_avtab_helper(int which, avrule_t ** rule)
 				/* complement the set */
 				if (which == AVRULE_DONTAUDIT)
 					yywarn("dontaudit rule with a ~?");
-				cur_perms->data = ~cur_perms->data;
+				cur_perms->data = ~cur_perms->data & PERMISSION_MASK(cladatum->permissions.nprim);
+				if (cur_perms->data == 0) {
+					class_perm_node_t *tmp = cur_perms;
+					yywarn("omitting avrule with no permission set");
+					if (perms == cur_perms)
+						perms = cur_perms->next;
+					cur_perms = cur_perms->next;
+					free(tmp);
+					continue;
+				}
 				goto next;
 			}
 
@@ -2889,190 +2900,6 @@ int define_roleattribute(void)
 	}
 
 	return 0;
-}
-
-role_datum_t *merge_roles_dom(role_datum_t * r1, role_datum_t * r2)
-{
-	role_datum_t *new;
-
-	if (pass == 1) {
-		return (role_datum_t *) 1;	/* any non-NULL value */
-	}
-
-	new = malloc(sizeof(role_datum_t));
-	if (!new) {
-		yyerror("out of memory");
-		return NULL;
-	}
-	memset(new, 0, sizeof(role_datum_t));
-	new->s.value = 0;		/* temporary role */
-	if (ebitmap_or(&new->dominates, &r1->dominates, &r2->dominates)) {
-		yyerror("out of memory");
-		free(new);
-		return NULL;
-	}
-	if (ebitmap_or(&new->types.types, &r1->types.types, &r2->types.types)) {
-		yyerror("out of memory");
-		free(new);
-		return NULL;
-	}
-	if (!r1->s.value) {
-		/* free intermediate result */
-		type_set_destroy(&r1->types);
-		ebitmap_destroy(&r1->dominates);
-		free(r1);
-	}
-	if (!r2->s.value) {
-		/* free intermediate result */
-		yyerror("right hand role is temporary?");
-		type_set_destroy(&r2->types);
-		ebitmap_destroy(&r2->dominates);
-		free(r2);
-	}
-	return new;
-}
-
-/* This function eliminates the ordering dependency of role dominance rule */
-static int dominate_role_recheck(hashtab_key_t key __attribute__ ((unused)),
-				 hashtab_datum_t datum, void *arg)
-{
-	role_datum_t *rdp = (role_datum_t *) arg;
-	role_datum_t *rdatum = (role_datum_t *) datum;
-	ebitmap_node_t *node;
-	uint32_t i;
-
-	/* Don't bother to process against self role */
-	if (rdatum->s.value == rdp->s.value)
-		return 0;
-
-	/* If a dominating role found */
-	if (ebitmap_get_bit(&(rdatum->dominates), rdp->s.value - 1)) {
-		ebitmap_t types;
-		ebitmap_init(&types);
-		if (type_set_expand(&rdp->types, &types, policydbp, 1)) {
-			ebitmap_destroy(&types);
-			return -1;
-		}
-		/* raise types and dominates from dominated role */
-		ebitmap_for_each_positive_bit(&rdp->dominates, node, i) {
-			if (ebitmap_set_bit(&rdatum->dominates, i, TRUE))
-				goto oom;
-		}
-		ebitmap_for_each_positive_bit(&types, node, i) {
-			if (ebitmap_set_bit(&rdatum->types.types, i, TRUE))
-				goto oom;
-		}
-		ebitmap_destroy(&types);
-	}
-
-	/* go through all the roles */
-	return 0;
-      oom:
-	yyerror("Out of memory");
-	return -1;
-}
-
-role_datum_t *define_role_dom(role_datum_t * r)
-{
-	role_datum_t *role;
-	char *role_id;
-	ebitmap_node_t *node;
-	unsigned int i;
-	int ret;
-
-	if (pass == 1) {
-		role_id = queue_remove(id_queue);
-		free(role_id);
-		return (role_datum_t *) 1;	/* any non-NULL value */
-	}
-
-	yywarn("Role dominance has been deprecated");
-
-	role_id = queue_remove(id_queue);
-	if (!is_id_in_scope(SYM_ROLES, role_id)) {
-		yyerror2("role %s is not within scope", role_id);
-		free(role_id);
-		return NULL;
-	}
-	role = (role_datum_t *) hashtab_search(policydbp->p_roles.table,
-					       role_id);
-	if (!role) {
-		role = (role_datum_t *) malloc(sizeof(role_datum_t));
-		if (!role) {
-			yyerror("out of memory");
-			free(role_id);
-			return NULL;
-		}
-		memset(role, 0, sizeof(role_datum_t));
-		ret =
-		    declare_symbol(SYM_ROLES, (hashtab_key_t) role_id,
-				   (hashtab_datum_t) role, &role->s.value,
-				   &role->s.value);
-		switch (ret) {
-		case -3:{
-				yyerror("Out of memory!");
-				goto cleanup;
-			}
-		case -2:{
-				yyerror2("duplicate declaration of role %s",
-					 role_id);
-				goto cleanup;
-			}
-		case -1:{
-				yyerror("could not declare role here");
-				goto cleanup;
-			}
-		case 0:
-		case 1:{
-				break;
-			}
-		default:{
-				assert(0);	/* should never get here */
-			}
-		}
-		if (ebitmap_set_bit(&role->dominates, role->s.value - 1, TRUE)) {
-			yyerror("Out of memory!");
-			goto cleanup;
-		}
-	}
-	if (r) {
-		ebitmap_t types;
-		ebitmap_init(&types);
-		ebitmap_for_each_positive_bit(&r->dominates, node, i) {
-			if (ebitmap_set_bit(&role->dominates, i, TRUE))
-				goto oom;
-		}
-		if (type_set_expand(&r->types, &types, policydbp, 1)) {
-			ebitmap_destroy(&types);
-			return NULL;
-		}
-		ebitmap_for_each_positive_bit(&types, node, i) {
-			if (ebitmap_set_bit(&role->types.types, i, TRUE))
-				goto oom;
-		}
-		ebitmap_destroy(&types);
-		if (!r->s.value) {
-			/* free intermediate result */
-			type_set_destroy(&r->types);
-			ebitmap_destroy(&r->dominates);
-			free(r);
-		}
-		/*
-		 * Now go through all the roles and escalate this role's
-		 * dominates and types if a role dominates this role.
-		 */
-		hashtab_map(policydbp->p_roles.table,
-			    dominate_role_recheck, role);
-	}
-	return role;
-      cleanup:
-	free(role_id);
-	role_datum_destroy(role);
-	free(role);
-	return NULL;
-      oom:
-	yyerror("Out of memory");
-	goto cleanup;
 }
 
 static int role_val_to_name_helper(hashtab_key_t key, hashtab_datum_t datum,
@@ -3549,8 +3376,6 @@ static constraint_expr_t *constraint_expr_clone(const constraint_expr_t * expr)
 	return NULL;
 }
 
-#define PERMISSION_MASK(nprim) ((nprim) == PERM_SYMTAB_SIZE ? (~UINT32_C(0)) : ((UINT32_C(1) << (nprim)) - 1))
-
 int define_constraint(constraint_expr_t * expr)
 {
 	struct constraint_node *node;
@@ -3964,8 +3789,9 @@ uintptr_t define_cexpr(uint32_t expr_type, uintptr_t arg1, uintptr_t arg2)
 int define_conditional(cond_expr_t * expr, avrule_t * t, avrule_t * f)
 {
 	cond_expr_t *e;
-	int depth;
+	int depth, booleans, tunables;
 	cond_node_t cn, *cn_old;
+	const cond_bool_datum_t *bool_var;
 
 	/* expression cannot be NULL */
 	if (!expr) {
@@ -3990,6 +3816,8 @@ int define_conditional(cond_expr_t * expr, avrule_t * t, avrule_t * f)
 
 	/* verify expression */
 	depth = -1;
+	booleans = 0;
+	tunables = 0;
 	for (e = expr; e; e = e->next) {
 		switch (e->expr_type) {
 		case COND_NOT:
@@ -4018,6 +3846,14 @@ int define_conditional(cond_expr_t * expr, avrule_t * t, avrule_t * f)
 				return -1;
 			}
 			depth++;
+
+			bool_var = policydbp->bool_val_to_struct[e->boolean - 1];
+			if (bool_var->flags & COND_BOOL_FLAGS_TUNABLE) {
+				tunables = 1;
+			} else {
+				booleans = 1;
+			}
+
 			break;
 		default:
 			yyerror("illegal conditional expression");
@@ -4026,6 +3862,10 @@ int define_conditional(cond_expr_t * expr, avrule_t * t, avrule_t * f)
 	}
 	if (depth != 0) {
 		yyerror("illegal conditional expression");
+		return -1;
+	}
+	if (booleans && tunables) {
+		yyerror("illegal conditional expression; Contains boolean and tunable");
 		return -1;
 	}
 

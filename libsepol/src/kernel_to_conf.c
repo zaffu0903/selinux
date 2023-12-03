@@ -24,6 +24,7 @@
 #include <sepol/policydb/services.h>
 #include <sepol/policydb/util.h>
 
+#include "debug.h"
 #include "kernel_to_common.h"
 
 
@@ -58,20 +59,20 @@ static char *cond_expr_to_str(struct policydb *pdb, struct cond_expr *expr)
 			case COND_EQ:	op = "=="; num_params = 2; break;
 			case COND_NEQ:	op = "!="; num_params = 2; break;
 			default:
-				sepol_log_err("Unknown conditional operator: %i", curr->expr_type);
+				ERR(NULL, "Unknown conditional operator: %i", curr->expr_type);
 				goto exit;
 			}
 
 			if (num_params == 2) {
 				val2 = strs_stack_pop(stack);
 				if (!val2) {
-					sepol_log_err("Invalid conditional expression");
+					ERR(NULL, "Invalid conditional expression");
 					goto exit;
 				}
 			}
 			val1 = strs_stack_pop(stack);
 			if (!val1) {
-				sepol_log_err("Invalid conditional expression");
+				ERR(NULL, "Invalid conditional expression");
 				free(val2);
 				goto exit;
 			}
@@ -84,19 +85,19 @@ static char *cond_expr_to_str(struct policydb *pdb, struct cond_expr *expr)
 			free(val1);
 		}
 		if (!new_val) {
-			sepol_log_err("Invalid conditional expression");
+			ERR(NULL, "Invalid conditional expression");
 			goto exit;
 		}
 		rc = strs_stack_push(stack, new_val);
 		if (rc != 0) {
-			sepol_log_err("Out of memory");
+			ERR(NULL, "Out of memory");
 			goto exit;
 		}
 	}
 
 	new_val = strs_stack_pop(stack);
 	if (!new_val || !strs_stack_empty(stack)) {
-		sepol_log_err("Invalid conditional expression");
+		ERR(NULL, "Invalid conditional expression");
 		goto exit;
 	}
 
@@ -144,7 +145,7 @@ static char *constraint_expr_to_str(struct policydb *pdb, struct constraint_expr
 			case CEXPR_DOMBY:   op = "domby";  break;
 			case CEXPR_INCOMP:  op = "incomp"; break;
 			default:
-				sepol_log_err("Unknown constraint operator: %i", curr->op);
+				ERR(NULL, "Unknown constraint operator: %i", curr->op);
 				goto exit;
 			}
 
@@ -165,11 +166,11 @@ static char *constraint_expr_to_str(struct policydb *pdb, struct constraint_expr
 			case CEXPR_L1H1:                 attr1 ="l1"; attr2 ="h1"; break;
 			case CEXPR_L2H2:                 attr1 ="l2"; attr2 ="h2"; break;
 			default:
-				sepol_log_err("Unknown constraint attribute: %i", curr->attr);
+				ERR(NULL, "Unknown constraint attribute: %i", curr->attr);
 				goto exit;
 			}
 
-			if (curr->attr >= CEXPR_XTARGET) {
+			if (curr->attr >= CEXPR_L1L2) {
 				*use_mls = 1;
 			}
 
@@ -188,7 +189,7 @@ static char *constraint_expr_to_str(struct policydb *pdb, struct constraint_expr
 				if (!names) {
 					names = strdup("NO_IDENTIFIER");
 					if (!names) {
-						sepol_log_err("Out of memory");
+						ERR(NULL, "Out of memory");
 						goto exit;
 					}
 				}
@@ -209,20 +210,20 @@ static char *constraint_expr_to_str(struct policydb *pdb, struct constraint_expr
 			case CEXPR_AND: op = "and"; num_params = 2; break;
 			case CEXPR_OR:  op = "or";  num_params = 2; break;
 			default:
-				sepol_log_err("Unknown constraint expression type: %i", curr->expr_type);
+				ERR(NULL, "Unknown constraint expression type: %i", curr->expr_type);
 				goto exit;
 			}
 
 			if (num_params == 2) {
 				val2 = strs_stack_pop(stack);
 				if (!val2) {
-					sepol_log_err("Invalid constraint expression");
+					ERR(NULL, "Invalid constraint expression");
 					goto exit;
 				}
 			}
 			val1 = strs_stack_pop(stack);
 			if (!val1) {
-				sepol_log_err("Invalid constraint expression");
+				ERR(NULL, "Invalid constraint expression");
 				goto exit;
 			}
 
@@ -239,14 +240,14 @@ static char *constraint_expr_to_str(struct policydb *pdb, struct constraint_expr
 		}
 		rc = strs_stack_push(stack, new_val);
 		if (rc != 0) {
-			sepol_log_err("Out of memory");
+			ERR(NULL, "Out of memory");
 			goto exit;
 		}
 	}
 
 	new_val = strs_stack_pop(stack);
 	if (!new_val || !strs_stack_empty(stack)) {
-		sepol_log_err("Invalid constraint expression");
+		ERR(NULL, "Invalid constraint expression");
 		goto exit;
 	}
 
@@ -318,7 +319,7 @@ static int class_constraint_rules_to_strs(struct policydb *pdb, char *classkey,
 
 	return 0;
 exit:
-	sepol_log_err("Error gathering constraint rules\n");
+	ERR(NULL, "Error gathering constraint rules");
 	return rc;
 }
 
@@ -425,7 +426,7 @@ static int write_handle_unknown_to_conf(FILE *out, struct policydb *pdb)
 		action = "allow";
 		break;
 	default:
-		sepol_log_err("Unknown value for handle-unknown: %i", pdb->handle_unknown);
+		ERR(NULL, "Unknown value for handle-unknown: %i", pdb->handle_unknown);
 		return -1;
 	}
 
@@ -464,18 +465,19 @@ static int write_sids_to_conf(FILE *out, const char *const *sid_to_str,
 
 	for (isid = isids; isid != NULL; isid = isid->next) {
 		i = isid->sid[0];
-		if (i < num_sids) {
-			sid = (char *)sid_to_str[i];
+		if (i < num_sids && sid_to_str[i]) {
+			sid = strdup(sid_to_str[i]);
 		} else {
 			snprintf(unknown, sizeof(unknown), "%s%u", "UNKNOWN", i);
 			sid = strdup(unknown);
-			if (!sid) {
-				rc = -1;
-				goto exit;
-			}
+		}
+		if (!sid) {
+			rc = -1;
+			goto exit;
 		}
 		rc = strs_add_at_index(strs, sid, i);
 		if (rc != 0) {
+			free(sid);
 			goto exit;
 		}
 	}
@@ -489,13 +491,10 @@ static int write_sids_to_conf(FILE *out, const char *const *sid_to_str,
 	}
 
 exit:
-	for (i=num_sids; i<strs_num_items(strs); i++) {
-		sid = strs_read_at_index(strs, i);
-		free(sid);
-	}
+	strs_free_all(strs);
 	strs_destroy(&strs);
 	if (rc != 0) {
-		sepol_log_err("Error writing sid rules to policy.conf\n");
+		ERR(NULL, "Error writing sid rules to policy.conf");
 	}
 
 	return rc;
@@ -512,7 +511,7 @@ static int write_sid_decl_rules_to_conf(FILE *out, struct policydb *pdb)
 		rc = write_sids_to_conf(out, xen_sid_to_str, XEN_SID_SZ,
 					pdb->ocontexts[0]);
 	} else {
-		sepol_log_err("Unknown target platform: %i", pdb->target_platform);
+		ERR(NULL, "Unknown target platform: %i", pdb->target_platform);
 		rc = -1;
 	}
 
@@ -556,7 +555,7 @@ static int write_class_and_common_rules_to_conf(FILE *out, struct policydb *pdb)
 	/* common */
 	used = calloc(pdb->p_commons.nprim, sizeof(*used));
 	if (!used) {
-		sepol_log_err("Out of memory");
+		ERR(NULL, "Out of memory");
 		rc = -1;
 		goto exit;
 	}
@@ -610,7 +609,7 @@ static int write_class_and_common_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing class rules to policy.conf\n");
+		ERR(NULL, "Error writing class rules to policy.conf");
 	}
 
 	return rc;
@@ -628,7 +627,7 @@ static int write_default_user_to_conf(FILE *out, char *class_name, class_datum_t
 		dft = "target";
 		break;
 	default:
-		sepol_log_err("Unknown default role value: %i", class->default_user);
+		ERR(NULL, "Unknown default role value: %i", class->default_user);
 		return -1;
 	}
 	sepol_printf(out, "default_user { %s } %s;\n", class_name, dft);
@@ -648,7 +647,7 @@ static int write_default_role_to_conf(FILE *out, char *class_name, class_datum_t
 		dft = "target";
 		break;
 	default:
-		sepol_log_err("Unknown default role value: %i", class->default_role);
+		ERR(NULL, "Unknown default role value: %i", class->default_role);
 		return -1;
 	}
 	sepol_printf(out, "default_role { %s } %s;\n", class_name, dft);
@@ -668,7 +667,7 @@ static int write_default_type_to_conf(FILE *out, char *class_name, class_datum_t
 		dft = "target";
 		break;
 	default:
-		sepol_log_err("Unknown default type value: %i", class->default_type);
+		ERR(NULL, "Unknown default type value: %i", class->default_type);
 		return -1;
 	}
 	sepol_printf(out, "default_type { %s } %s;\n", class_name, dft);
@@ -703,7 +702,7 @@ static int write_default_range_to_conf(FILE *out, char *class_name, class_datum_
 		dft = "glblub";
 		break;
 	default:
-		sepol_log_err("Unknown default type value: %i", class->default_range);
+		ERR(NULL, "Unknown default type value: %i", class->default_range);
 		return -1;
 	}
 	sepol_printf(out, "default_range { %s } %s;\n", class_name, dft);
@@ -771,7 +770,7 @@ static int write_default_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing default rules to policy.conf\n");
+		ERR(NULL, "Error writing default rules to policy.conf");
 	}
 
 	return rc;
@@ -902,7 +901,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing sensitivity rules to CIL\n");
+		ERR(NULL, "Error writing sensitivity rules to CIL");
 	}
 
 	return rc;
@@ -1010,7 +1009,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing category rules to policy.conf\n");
+		ERR(NULL, "Error writing category rules to policy.conf");
 	}
 
 	return rc;
@@ -1129,7 +1128,7 @@ static int write_level_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing level rules to policy.conf\n");
+		ERR(NULL, "Error writing level rules to policy.conf");
 	}
 
 	return rc;
@@ -1160,7 +1159,7 @@ static int write_mls_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing mls rules to policy.conf\n");
+		ERR(NULL, "Error writing mls rules to policy.conf");
 	}
 
 	return rc;
@@ -1182,7 +1181,7 @@ static int write_polcap_rules_to_conf(FILE *out, struct policydb *pdb)
 	ebitmap_for_each_positive_bit(&pdb->policycaps, node, i) {
 		name = sepol_polcap_getname(i);
 		if (name == NULL) {
-			sepol_log_err("Unknown policy capability id: %i", i);
+			ERR(NULL, "Unknown policy capability id: %i", i);
 			rc = -1;
 			goto exit;
 		}
@@ -1201,7 +1200,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing polcap rules to policy.conf\n");
+		ERR(NULL, "Error writing polcap rules to policy.conf");
 	}
 
 	return rc;
@@ -1246,7 +1245,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing typeattribute rules to policy.conf\n");
+		ERR(NULL, "Error writing typeattribute rules to policy.conf");
 	}
 
 	return rc;
@@ -1291,7 +1290,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing roleattribute rules to policy.conf\n");
+		ERR(NULL, "Error writing roleattribute rules to policy.conf");
 	}
 
 	return rc;
@@ -1331,7 +1330,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing boolean declarations to policy.conf\n");
+		ERR(NULL, "Error writing boolean declarations to policy.conf");
 	}
 
 	return rc;
@@ -1376,7 +1375,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing type declarations to policy.con\n");
+		ERR(NULL, "Error writing type declarations to policy.conf");
 	}
 
 	return rc;
@@ -1450,7 +1449,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing type alias rules to policy.conf\n");
+		ERR(NULL, "Error writing type alias rules to policy.conf");
 	}
 
 	return rc;
@@ -1504,7 +1503,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing type bounds rules to policy.conf\n");
+		ERR(NULL, "Error writing type bounds rules to policy.conf");
 	}
 
 	return rc;
@@ -1526,7 +1525,7 @@ static char *attr_strs_to_str(struct strs *strs)
 	len = strs_len_items(strs) + 2*strs->num - 1;
 	str = malloc(len);
 	if (!str) {
-		sepol_log_err("Out of memory");
+		ERR(NULL, "Out of memory");
 		goto exit;
 	}
 
@@ -1631,7 +1630,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing typeattributeset rules to policy.conf\n");
+		ERR(NULL, "Error writing typeattributeset rules to policy.conf");
 	}
 
 	return rc;
@@ -1673,7 +1672,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing typepermissive rules to policy.conf\n");
+		ERR(NULL, "Error writing typepermissive rules to policy.conf");
 	}
 
 	return rc;
@@ -1684,7 +1683,7 @@ static char *avtab_node_to_str(struct policydb *pdb, avtab_key_t *key, avtab_dat
 	uint32_t data = datum->data;
 	type_datum_t *type;
 	const char *flavor, *src, *tgt, *class, *perms, *new;
-	char *rule = NULL;
+	char *rule = NULL, *permstring;
 
 	switch (0xFFF & key->specified) {
 	case AVTAB_ALLOWED:
@@ -1716,7 +1715,7 @@ static char *avtab_node_to_str(struct policydb *pdb, avtab_key_t *key, avtab_dat
 		flavor = "type_change";
 		break;
 	default:
-		sepol_log_err("Unknown avtab type: %i", key->specified);
+		ERR(NULL, "Unknown avtab type: %i", key->specified);
 		goto exit;
 	}
 
@@ -1733,19 +1732,20 @@ static char *avtab_node_to_str(struct policydb *pdb, avtab_key_t *key, avtab_dat
 	if (key->specified & AVTAB_AV) {
 		perms = sepol_av_to_string(pdb, key->target_class, data);
 		if (perms == NULL) {
-			sepol_log_err("Failed to generate permission string");
+			ERR(NULL, "Failed to generate permission string");
 			goto exit;
 		}
 		rule = create_str("%s %s %s:%s { %s };", 5,
 				  flavor, src, tgt, class, perms+1);
 	} else if (key->specified & AVTAB_XPERMS) {
-		perms = sepol_extended_perms_to_string(datum->xperms);
-		if (perms == NULL) {
-			sepol_log_err("Failed to generate extended permission string");
+		permstring = sepol_extended_perms_to_string(datum->xperms);
+		if (permstring == NULL) {
+			ERR(NULL, "Failed to generate extended permission string");
 			goto exit;
 		}
 
-		rule = create_str("%s %s %s:%s %s;", 5, flavor, src, tgt, class, perms);
+		rule = create_str("%s %s %s:%s %s;", 5, flavor, src, tgt, class, permstring);
+		free(permstring);
 	} else {
 		new = pdb->p_type_val_to_name[data - 1];
 
@@ -1838,7 +1838,7 @@ static int write_avtab_to_conf(FILE *out, struct policydb *pdb, int indent)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing avtab rules to policy.conf\n");
+		ERR(NULL, "Error writing avtab rules to policy.conf");
 	}
 
 	return rc;
@@ -1909,7 +1909,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing filename typetransition rules to policy.conf\n");
+		ERR(NULL, "Error writing filename typetransition rules to policy.conf");
 	}
 
 	return rc;
@@ -2020,7 +2020,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing range transition rules to policy.conf\n");
+		ERR(NULL, "Error writing range transition rules to policy.conf");
 	}
 
 	return rc;
@@ -2158,7 +2158,7 @@ exit:
 	}
 
 	if (rc != 0) {
-		sepol_log_err("Error writing conditional rules to policy.conf\n");
+		ERR(NULL, "Error writing conditional rules to policy.conf");
 	}
 
 	return rc;
@@ -2240,7 +2240,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing role declarations to policy.conf\n");
+		ERR(NULL, "Error writing role declarations to policy.conf");
 	}
 
 	return rc;
@@ -2281,7 +2281,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing role transition rules to policy.conf\n");
+		ERR(NULL, "Error writing role transition rules to policy.conf");
 	}
 
 	return rc;
@@ -2319,7 +2319,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing role allow rules to policy.conf\n");
+		ERR(NULL, "Error writing role allow rules to policy.conf");
 	}
 
 	return rc;
@@ -2402,7 +2402,7 @@ exit:
 		strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing user declarations to policy.conf\n");
+		ERR(NULL, "Error writing user declarations to policy.conf");
 	}
 
 	return rc;
@@ -2445,7 +2445,7 @@ static int write_sid_context_rules_to_conf(FILE *out, struct policydb *pdb, cons
 
 	for (isid = pdb->ocontexts[0]; isid != NULL; isid = isid->next) {
 		i = isid->sid[0];
-		if (i < num_sids) {
+		if (i < num_sids && sid_to_str[i]) {
 			sid = (char *)sid_to_str[i];
 		} else {
 			snprintf(unknown, sizeof(unknown), "%s%u", "UNKNOWN", i);
@@ -2479,7 +2479,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing sidcontext rules to policy.conf\n");
+		ERR(NULL, "Error writing sidcontext rules to policy.conf");
 	}
 
 	return rc;
@@ -2504,7 +2504,7 @@ static int write_selinux_fsuse_rules_to_conf(FILE *out, struct policydb *pdb)
 		case SECURITY_FS_USE_TRANS: behavior = "trans"; break;
 		case SECURITY_FS_USE_TASK:  behavior = "task"; break;
 		default:
-			sepol_log_err("Unknown fsuse behavior: %i", fsuse->v.behavior);
+			ERR(NULL, "Unknown fsuse behavior: %i", fsuse->v.behavior);
 			rc = -1;
 			goto exit;
 		}
@@ -2523,7 +2523,7 @@ static int write_selinux_fsuse_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing fsuse rules to policy.conf\n");
+		ERR(NULL, "Error writing fsuse rules to policy.conf");
 	}
 
 	return rc;
@@ -2601,7 +2601,7 @@ exit:
 	strs_destroy(&strs);
 
 	if (rc != 0) {
-		sepol_log_err("Error writing genfscon rules to policy.conf\n");
+		ERR(NULL, "Error writing genfscon rules to policy.conf");
 	}
 
 	return rc;
@@ -2624,7 +2624,7 @@ static int write_selinux_port_rules_to_conf(FILE *out, struct policydb *pdb)
 		case IPPROTO_DCCP: protocol = "dccp"; break;
 		case IPPROTO_SCTP: protocol = "sctp"; break;
 		default:
-			sepol_log_err("Unknown portcon protocol: %i", portcon->u.port.protocol);
+			ERR(NULL, "Unknown portcon protocol: %i", portcon->u.port.protocol);
 			rc = -1;
 			goto exit;
 		}
@@ -2656,7 +2656,7 @@ static int write_selinux_port_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing portcon rules to policy.conf\n");
+		ERR(NULL, "Error writing portcon rules to policy.conf");
 	}
 
 	return rc;
@@ -2690,7 +2690,7 @@ static int write_selinux_netif_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing netifcon rules to policy.conf\n");
+		ERR(NULL, "Error writing netifcon rules to policy.conf");
 	}
 
 	return rc;
@@ -2706,13 +2706,13 @@ static int write_selinux_node_rules_to_conf(FILE *out, struct policydb *pdb)
 
 	for (node = pdb->ocontexts[4]; node != NULL; node = node->next) {
 		if (inet_ntop(AF_INET, &node->u.node.addr, addr, INET_ADDRSTRLEN) == NULL) {
-			sepol_log_err("Nodecon address is invalid: %m");
+			ERR(NULL, "Nodecon address is invalid: %m");
 			rc = -1;
 			goto exit;
 		}
 
 		if (inet_ntop(AF_INET, &node->u.node.mask, mask, INET_ADDRSTRLEN) == NULL) {
-			sepol_log_err("Nodecon mask is invalid: %m");
+			ERR(NULL, "Nodecon mask is invalid: %m");
 			rc = -1;
 			goto exit;
 		}
@@ -2730,7 +2730,7 @@ static int write_selinux_node_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing nodecon rules to policy.conf\n");
+		ERR(NULL, "Error writing nodecon rules to policy.conf");
 	}
 
 	return rc;
@@ -2747,13 +2747,13 @@ static int write_selinux_node6_rules_to_conf(FILE *out, struct policydb *pdb)
 
 	for (node6 = pdb->ocontexts[6]; node6 != NULL; node6 = node6->next) {
 		if (inet_ntop(AF_INET6, &node6->u.node6.addr, addr, INET6_ADDRSTRLEN) == NULL) {
-			sepol_log_err("Nodecon address is invalid: %m");
+			ERR(NULL, "Nodecon address is invalid: %m");
 			rc = -1;
 			goto exit;
 		}
 
 		if (inet_ntop(AF_INET6, &node6->u.node6.mask, mask, INET6_ADDRSTRLEN) == NULL) {
-			sepol_log_err("Nodecon mask is invalid: %m");
+			ERR(NULL, "Nodecon mask is invalid: %m");
 			rc = -1;
 			goto exit;
 		}
@@ -2771,7 +2771,7 @@ static int write_selinux_node6_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing nodecon rules to policy.conf\n");
+		ERR(NULL, "Error writing nodecon rules to policy.conf");
 	}
 
 	return rc;
@@ -2795,7 +2795,7 @@ static int write_selinux_ibpkey_rules_to_conf(FILE *out, struct policydb *pdb)
 
 		if (inet_ntop(AF_INET6, &subnet_prefix.s6_addr,
 			      subnet_prefix_str, INET6_ADDRSTRLEN) == NULL) {
-			sepol_log_err("ibpkeycon address is invalid: %m");
+			ERR(NULL, "ibpkeycon address is invalid: %m");
 			rc = -1;
 			goto exit;
 		}
@@ -2828,7 +2828,7 @@ static int write_selinux_ibpkey_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing ibpkeycon rules to policy.conf\n");
+		ERR(NULL, "Error writing ibpkeycon rules to policy.conf");
 	}
 
 	return rc;
@@ -2864,7 +2864,7 @@ static int write_selinux_ibendport_rules_to_conf(FILE *out, struct policydb *pdb
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing ibendportcon rules to policy.conf\n");
+		ERR(NULL, "Error writing ibendportcon rules to policy.conf");
 	}
 
 	return rc;
@@ -2886,7 +2886,6 @@ static int write_xen_pirq_rules_to_conf(FILE *out, struct policydb *pdb)
 	for (pirq = pdb->ocontexts[1]; pirq != NULL; pirq = pirq->next) {
 		rc = snprintf(pirq_str, 21, "%i", pirq->u.pirq);
 		if (rc < 0 || rc >= 21) {
-			fprintf(stderr,"error1\n");
 			rc = -1;
 			goto exit;
 		}
@@ -2894,7 +2893,6 @@ static int write_xen_pirq_rules_to_conf(FILE *out, struct policydb *pdb)
 		ctx = context_to_str(pdb, &pirq->context[0]);
 		if (!ctx) {
 			rc = -1;
-			fprintf(stderr,"error2\n");
 			goto exit;
 		}
 
@@ -2907,7 +2905,7 @@ static int write_xen_pirq_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing pirqcon rules to policy.conf\n");
+		ERR(NULL, "Error writing pirqcon rules to policy.conf");
 	}
 
 	return rc;
@@ -2950,7 +2948,7 @@ static int write_xen_ioport_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing ioportcon rules to policy.conf\n");
+		ERR(NULL, "Error writing ioportcon rules to policy.conf");
 	}
 
 	return rc;
@@ -2993,7 +2991,7 @@ static int write_xen_iomem_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing iomemcon rules to policy.conf\n");
+		ERR(NULL, "Error writing iomemcon rules to policy.conf");
 	}
 
 	return rc;
@@ -3028,7 +3026,7 @@ static int write_xen_pcidevice_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing pcidevicecon rules to policy.conf\n");
+		ERR(NULL, "Error writing pcidevicecon rules to policy.conf");
 	}
 
 	return rc;
@@ -3055,7 +3053,7 @@ static int write_xen_devicetree_rules_to_conf(FILE *out, struct policydb *pdb)
 
 exit:
 	if (rc != 0) {
-		sepol_log_err("Error writing devicetreecon rules to policy.conf\n");
+		ERR(NULL, "Error writing devicetreecon rules to policy.conf");
 	}
 
 	return rc;
@@ -3090,13 +3088,13 @@ int sepol_kernel_policydb_to_conf(FILE *out, struct policydb *pdb)
 	}
 
 	if (pdb == NULL) {
-		sepol_log_err("No policy");
+		ERR(NULL, "No policy");
 		rc = -1;
 		goto exit;
 	}
 
 	if (pdb->policy_type != SEPOL_POLICY_KERN) {
-		sepol_log_err("Policy is not a kernel policy");
+		ERR(NULL, "Policy is not a kernel policy");
 		rc = -1;
 		goto exit;
 	}
@@ -3108,7 +3106,7 @@ int sepol_kernel_policydb_to_conf(FILE *out, struct policydb *pdb)
 		 * the type_val_to_struct and p_type_val_to_name arrays and policy rules
 		 * can refer to those gaps.
 		 */
-		sepol_log_err("Writing policy versions between 20 and 23 as a policy.conf is not supported");
+		ERR(NULL, "Writing policy versions between 20 and 23 as a policy.conf is not supported");
 		rc = -1;
 		goto exit;
 	}
